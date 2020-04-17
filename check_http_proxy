@@ -1,0 +1,94 @@
+#!/usr/bin/python
+# vi:ts=4:noet
+#
+# Nagios HTTP proxy test
+#
+# usage: check_http_proxy --proxy=proxy:port --auth=user:pass --url=url --timeout=10 --warntime=5 --expect=content
+#
+# Response codes: 0(OK), 1(WARNING), 2(CRITICAL), 3(UNKNOWN)
+# Output: one line on stdout
+#
+
+import sys
+import getopt
+import time
+import urllib2
+import socket
+import argparse
+
+def test_proxy(args):
+	# Set up for request (use cred@proxy form because this bypasses knowing the realm)
+	if getattr(args, 'auth'):
+		proxy_url = "{}@{}".format(args.auth, args.proxy)
+	else:
+		proxy_url = "{}".format(args.proxy)
+
+	proxy_handler = urllib2.ProxyHandler({ 'http' : proxy_url, 'https' : proxy_url })
+	opener = urllib2.build_opener(proxy_handler)
+    urllib2.install_opener(opener)
+
+    response = urllib2.urlopen(args.url, None, args.timeout)
+
+	return response
+
+def report_ok(msg):
+	print "PROXY OK - {0}".format(msg)
+	sys.exit(0)
+
+def report_warning(msg):
+	print "PROXY WARNING - {0}".format(msg)
+	sys.exit(1)
+
+def report_critical(msg):
+	print "PROXY CRITICAL - {0}".format(msg)
+	sys.exit(2)
+
+def report_unknown(msg):
+	print "PROXY UNKNWON - {0}".format(msg)
+	sys.exit(3)
+
+if __name__ == '__main__':
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        '-p', '--proxy', dest='proxy', type=str, required=True, help='Specifies FQDN or IP address of proxy server.')
+    parser.add_argument(
+        '-a', '--auth', dest='auth', type=str, help='Specifies user and password with format <user:pass>.')
+    parser.add_argument(
+        '-u', '--url', dest='url', type=str, required=True, help='Specifies URL to test.')
+    parser.add_argument(
+        '-t', '--timeout', dest='timeout', type=int, default=5, help='Set timetout.')
+    parser.add_argument(
+        '-w', '--warntime', dest='warntime', type=int, default=3, help='Set warn time.')
+    parser.add_argument(
+        '-e', '--expect', dest='expect', type=str, help='Specifies Content to check')
+    args = parser.parse_args()
+
+	start_time = time.time()
+
+	try:
+		response = test_proxy(args)
+
+	except urllib2.URLError as e:
+		if hasattr(e,"reason") and isinstance(e.reason, socket.timeout):
+			report_critical("Timed out (over {:.2f}s)".format(args.timeout))
+		else:
+			report_critical("Request failed ({0})".format(e))
+
+	except Exception as e:
+		report_unknown("Request failed: ({0})".format(`e`))
+
+	end_time = time.time()
+	duration = end_time - start_time
+
+	# Check content
+	if getattr(args, 'expect'):
+		if response.read().find(str(args.expect)) == -1:
+			report_critical("Failed content check ({})".format(str(args.expect)))
+			
+	# Check warning time
+	if getattr(args, 'warntime'):
+		if duration >= args.warntime:
+			report_warning("Over warning time ({0:.2f}s >= {:.2f}s)".format(duration, args.wartime))
+
+	report_ok("Request return in {0:.2f} seconds".format(duration))
