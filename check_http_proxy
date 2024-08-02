@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python3
 # vi:ts=4:noet
 #
 # Nagios HTTP proxy test
@@ -12,40 +12,39 @@
 import sys
 import getopt
 import time
-import urllib2
+import urllib3
+import urllib3.exceptions
 import socket
 import argparse
 
 def test_proxy(args):
-	# Set up for request (use cred@proxy form because this bypasses knowing the realm)
-	if getattr(args, 'auth'):
-		proxy_url = "{}@{}".format(args.auth, args.proxy)
-	else:
-		proxy_url = "{}".format(args.proxy)
+    # Set up for request (use cred@proxy form because this bypasses knowing the realm)
+    if getattr(args, 'auth'):
+        proxy_url = "{}://{}@{}".format(args.scheme, args.auth, args.proxy)
+    else:
+        proxy_url = "{}://{}".format(args.scheme, args.proxy)
 
-	proxy_handler = urllib2.ProxyHandler({ 'http' : proxy_url, 'https' : proxy_url })
-	opener = urllib2.build_opener(proxy_handler)
-    urllib2.install_opener(opener)
+    proxy = urllib3.ProxyManager(proxy_url)
 
-    response = urllib2.urlopen(args.url, None, args.timeout)
+    response = proxy.request("GET", args.url, None, timeout=args.timeout)
 
-	return response
+    return response
 
 def report_ok(msg):
-	print "PROXY OK - {0}".format(msg)
-	sys.exit(0)
+    print("PROXY OK - {0}".format(msg))
+    sys.exit(0)
 
 def report_warning(msg):
-	print "PROXY WARNING - {0}".format(msg)
-	sys.exit(1)
+    print("PROXY WARNING - {0}".format(msg))
+    sys.exit(1)
 
 def report_critical(msg):
-	print "PROXY CRITICAL - {0}".format(msg)
-	sys.exit(2)
+    print("PROXY CRITICAL - {0}".format(msg))
+    sys.exit(2)
 
 def report_unknown(msg):
-	print "PROXY UNKNWON - {0}".format(msg)
-	sys.exit(3)
+    print("PROXY UNKNWON - {0}".format(msg))
+    sys.exit(3)
 
 if __name__ == '__main__':
 
@@ -62,33 +61,35 @@ if __name__ == '__main__':
         '-w', '--warntime', dest='warntime', type=int, default=3, help='Set warn time.')
     parser.add_argument(
         '-e', '--expect', dest='expect', type=str, help='Specifies Content to check')
+    parser.add_argument(
+        '-s', '--scheme', dest='scheme', type=str, default='http', help='Proxy scheme http or https')
     args = parser.parse_args()
 
-	start_time = time.time()
+    start_time = time.time()
 
-	try:
-		response = test_proxy(args)
+    try:
+        response = test_proxy(args)
 
-	except urllib2.URLError as e:
-		if hasattr(e,"reason") and isinstance(e.reason, socket.timeout):
-			report_critical("Timed out (over {:.2f}s)".format(args.timeout))
-		else:
-			report_critical("Request failed ({0})".format(e))
+    except urllib3.exceptions.HTTPError as e:
+        if hasattr(e,"reason") and isinstance(e.reason, socket.timeout):
+            report_critical("Timed out (over {:.2f}s)".format(args.timeout))
+        else:
+            report_critical("Request failed ({0})".format(e))
 
-	except Exception as e:
-		report_unknown("Request failed: ({0})".format(`e`))
+    except Exception as e:
+        report_unknown("Request failed: ({0})".format(e))
 
-	end_time = time.time()
-	duration = end_time - start_time
+    end_time = time.time()
+    duration = end_time - start_time
 
-	# Check content
-	if getattr(args, 'expect'):
-		if response.read().find(str(args.expect)) == -1:
-			report_critical("Failed content check ({})".format(str(args.expect)))
-			
-	# Check warning time
-	if getattr(args, 'warntime'):
-		if duration >= args.warntime:
-			report_warning("Over warning time ({0:.2f}s >= {:.2f}s)".format(duration, args.wartime))
+    # Check content
+    if getattr(args, 'expect'):
+        if response.data.decode("utf-8").find(str(args.expect)) == -1:
+            report_critical("Failed content check ({})".format(str(args.expect)))
 
-	report_ok("Request return in {0:.2f} seconds".format(duration))
+    # Check warning time
+    if getattr(args, 'warntime'):
+        if duration >= args.warntime:
+            report_warning("Over warning time ({0:.2f}s >= {1:.2f}s) | time={0:.2f}s".format(duration, args.warntime))
+
+    report_ok("Request return in {0:.2f} seconds | time={0:.2f}s".format(duration))
